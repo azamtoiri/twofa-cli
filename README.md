@@ -1,93 +1,154 @@
-# twfa-cli
+# twofa-cli 🔑
 
+Стильный, быстрый и безопасный терминальный (TUI) двухфакторный менеджер аутентификации (2FA), написанный на Rust. Полный аналог Google Authenticator для командной строки с поддержкой шифрования базы данных.
 
+---
 
-## Getting started
+## ✨ Возможности
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+* 🔒 **Сверхзащищенное хранилище (Vault):** Локальная SQLite-база данных шифруется с помощью нативного алгоритма **AES-256-GCM**. Ключ шифрования извлекается из вашего мастер-пароля с использованием функции деривации ключей **Argon2id**.
+* 🖥️ **Интерактивный Терминальный интерфейс (TUI):**
+  * Список секретов с живыми таймерами и автоматическим обновлением кодов в реальном времени.
+  * Визуальный индикатор-прогрессбар времени жизни кода (TTL), который тает по мере истечения 30 секунд.
+  * Цветовая индикация приближающегося времени истечения кода (зелёный ➔ жёлтый ➔ красный).
+* 📱 **Адаптивный дизайн (Responsive UI):**
+  * Автоматическое скрытие графического прогресс-бара на узких экранах (<58 колонок) для избежания наслоения текста.
+  * Умная обрезка длинных имён с помощью многоточий (`…`).
+  * Схлопывание боковых полей и переключение горячих клавиш в ультракомпактный формат на маленьких экранах.
+* 📋 **Интеграция с буфером обмена:** Быстрое копирование кода в буфер обмена по нажатию `Enter` с нативной поддержкой macOS, Windows и Linux (X11 & Wayland). При отсутствии графической оболочки (например, по SSH) код выводится прямо на экран.
+* ⌨️ **Интерактивный ввод и поиск:**
+  * Удобное модальное окно добавления секретов с полями ввода Имени и Секрета.
+  * Автоматический парсинг параметров из вставленных ссылок вида `otpauth://totp/...` (извлечение параметров `secret`, `issuer`, `digits`, `period` и `algorithm`).
+  * Поиск и фильтрация списка по имени на лету при нажатии `/`.
+* 📲 **Импорт и Экспорт (Резервные копии):**
+  * Быстрый импорт из JSON-экспортов, списков ссылок `otpauth://` (по одной на строку) или CSV-файлов (`Имя,Секрет`).
+  * Безопасный экспорт расшифрованных секретов с подтверждением действия со стороны пользователя.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+---
 
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## 🛠️ Архитектура безопасности
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/azamtoiri1/twfa-cli.git
-git branch -M main
-git push -uf origin main
+[Мастер-пароль] ➔ Argon2id ➔ [32-байт Ключ] ➔ AES-256-GCM ➔ SQLite (.twofa-cli/vault.db)
 ```
 
-## Integrate with your tools
+1. **Деривация ключа:** При создании сейфа генерируется случайная 32-байтная соль. Ключ шифрования вычисляется через ресурсоёмкий алгоритм **Argon2id** (устойчив к перебору на GPU/ASIC).
+2. **Шифрование данных:** Поле `secret_base32` каждого TOTP-токена зашифровывается алгоритмом **AES-256-GCM** со случайным уникальным вектором инициализации (Nonce) для каждой записи.
+3. **Проверка целостности:** При разблокировке проверяется валидность расшифровки контрольной строки `twofa-cli-vault-ok`.
 
-* [Set up project integrations](https://gitlab.com/azamtoiri1/twfa-cli/-/settings/integrations)
+---
 
-## Collaborate with your team
+## ⚙️ Системные требования и зависимости
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+Приложение полностью кроссплатформенно и протестировано на **Linux**, **macOS** и **Windows**:
 
-## Test and Deploy
+* **Rust:** Рекомендуется стабильная версия 1.75+ или редакция 2024.
+* **SQLite:** Используется крейт `rusqlite` с флагом `bundled`, поэтому внешняя библиотека SQLite в системе не требуется.
+* **Clipboard:** Библиотека `arboard` обращается к системным API для копирования кодов. На Linux с X11 может потребоваться пакет `xorg-dev` / `libxcb` при компиляции.
 
-Use the built-in continuous integration in GitLab.
+---
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+## 🚀 Установка и сборка
 
-***
+Склонируйте репозиторий и скомпилируйте оптимизированный релизный бинарный файл:
 
-# Editing this README
+```bash
+git clone https://github.com/azamtoiri/twofa-cli.git
+cd twofa-cli
+cargo build --release
+```
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+Скомпилированный файл будет находиться по пути:
+`target/release/twofa-cli`
 
-## Suggestions for a good README
+Вы можете скопировать его в директорию системных исполняемых файлов (например, `/usr/local/bin/` на macOS/Linux):
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+```bash
+cp target/release/twofa-cli /usr/local/bin/twofa
+```
 
-## Name
-Choose a self-explaining name for your project.
+---
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## 🎮 Использование TUI и Горячие клавиши
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Просто запустите утилиту без аргументов для входа в интерактивный режим:
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+```bash
+twofa
+```
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+В интерфейсе доступны следующие горячие клавиши:
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+| Клавиша | Режим | Действие |
+| :---: | :---: | --- |
+| `q` | Обычный | Выход из приложения |
+| `a` | Обычный | Открыть окно добавления нового токена |
+| `Enter` | Обычный | Скопировать выбранный TOTP-код в буфер обмена |
+| `d` | Обычный | Удалить выбранный токен (требует подтверждения `y`/`n`) |
+| `e` | Обычный | Изменить имя выбранного токена |
+| `/` | Обычный | Начать поиск / фильтрацию токенов по названию |
+| `j` / `⬇` | Обычный | Выбрать следующий токен в списке |
+| `k` / `⬆` | Обычный | Выбрать предыдущий токен в списке |
+| `Esc` | Окно ввода | Отменить текущее действие и вернуться в обычный режим |
+| `Enter` | Окно ввода | Подтвердить ввод / Сохранить данные |
+| `Tab` | Добавление | Переключить фокус ввода между полями «Имя» и «Секрет» |
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+---
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+## 💻 Режимы командной строки (CLI-режим)
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+Вы можете полноценно использовать приложение в скриптах автоматизации или разовых вызовах без входа в TUI-интерфейс:
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+### 1. Получить конкретный код по имени
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+Сразу выведет актуальный TOTP-код в stdout и покажет время жизни:
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+```bash
+twofa --secret "GitHub"
+```
 
-## License
-For open source projects, say how it is licensed.
+### 2. Вывести список всех кодов разом
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+```bash
+twofa --list
+```
+
+### 3. Быстро добавить токен из командной строки
+
+```bash
+twofa --add "MyService" "JBSWY3DPEHPK3PXP"
+```
+
+### 4. Экспорт базы данных (Бэкап)
+
+Экспортирует все расшифрованные секреты в виде форматированного JSON-файла после подтверждения операции:
+
+```bash
+twofa --export backup.json
+```
+
+### 5. Импорт данных
+
+Импортирует записи из файла резервной копии. Поддерживает форматы:
+
+* JSON-экспорт, сгенерированный приложением.
+* Список URI вида `otpauth://totp/...` (по одному на строку).
+* Списки формата CSV (`Название,Секрет`).
+
+```bash
+twofa --import backup.json
+```
+
+### 6. Использовать нестандартный файл сейфа
+
+По умолчанию приложение сохраняет сейф в скрытой папке вашего домашнего каталога: `~/.twofa-cli/vault.db`. Вы можете явно указать другой путь к базе через флаг `--db`:
+
+```bash
+twofa --db /my/secure/usb/vault.db
+```
+
+---
+
+## 🔒 Лицензия
+
+Проект распространяется под лицензией MIT. Подробности см. в файле [LICENSE](LICENSE) (если применим).
