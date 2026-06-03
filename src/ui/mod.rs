@@ -33,7 +33,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ])
         .split(main_layout[0]);
 
-    render_list(f, content_layout[1], app);
+    let middle_area = content_layout[1];
+
+    match app.active_tab {
+        crate::models::AppTab::Keys => {
+            render_list(f, middle_area, app);
+        }
+        crate::models::AppTab::Settings => {
+            render_settings(f, middle_area, app);
+        }
+    }
+
     render_help(f, main_layout[1], app);
 
     match &app.input_mode {
@@ -49,7 +59,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
 fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     let filtered = app.filtered_entries();
-    let title = format!(" twofa-cli [{}] ", filtered.len());
+    let total_count = app.entries.len();
+    let title = if app.search_input.is_empty() {
+        format!(" twofa-cli [{}] ", total_count)
+    } else {
+        format!(
+            " twofa-cli [{}/{}] (filter: \"{}\", Esc to clear) ",
+            filtered.len(),
+            total_count,
+            app.search_input
+        )
+    };
 
     let items: Vec<ListItem> = filtered
         .iter()
@@ -127,9 +147,7 @@ fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         );
 
     f.render_stateful_widget(list, area, &mut app.list_state);
-}
-
-fn render_help(f: &mut Frame, area: Rect, app: &App) {
+}fn render_help(f: &mut Frame, area: Rect, app: &App) {
     let mut spans = Vec::new();
     let width = area.width;
 
@@ -139,36 +157,38 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
             return;
         }
         if !spans.is_empty() {
-            let sep = if width < 50 { " " } else if width < 70 { "  " } else { "   " };
-            spans.push(Span::styled(sep, Style::default().fg(theme::COLOR_MUTED)));
+            spans.push(Span::styled("   ", Style::default().bg(theme::COLOR_SURFACE)));
         }
 
         spans.push(Span::styled(
-            if width < 50 { format!("[{}]", key) } else { format!(" {} ", key) },
-            if width < 50 {
-                Style::default().fg(theme::COLOR_PRIMARY).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-                    .bg(theme::COLOR_SURFACE)
-                    .fg(theme::COLOR_PRIMARY)
-                    .add_modifier(Modifier::BOLD)
-            }
+            format!(" {} ", key),
+            Style::default()
+                .bg(theme::COLOR_PRIMARY)
+                .fg(theme::COLOR_BG)
+                .add_modifier(Modifier::BOLD),
         ));
 
         spans.push(Span::styled(
-            format!(" {}", use_desc),
-            Style::default().fg(theme::COLOR_TEXT),
+            format!(" {} ", use_desc),
+            Style::default().fg(theme::COLOR_TEXT).bg(theme::COLOR_SURFACE),
         ));
     };
 
     match &app.input_mode {
         InputMode::Normal => {
-            add_key(&mut spans, "q", "quit", "quit");
-            add_key(&mut spans, "a", "add", "add");
-            add_key(&mut spans, "Enter", "copy", "copy");
-            add_key(&mut spans, "d", "delete", "del");
-            add_key(&mut spans, "e", "edit", "edit");
-            add_key(&mut spans, "/", "search", "find");
+            if app.active_tab == crate::models::AppTab::Settings {
+                add_key(&mut spans, "Tab/Arrows", "navigate", "nav");
+                add_key(&mut spans, "Enter", "submit", "save");
+                add_key(&mut spans, "Esc", "back to keys", "esc");
+            } else {
+                add_key(&mut spans, "q", "quit", "quit");
+                add_key(&mut spans, "a", "add", "add");
+                add_key(&mut spans, "Enter", "copy", "copy");
+                add_key(&mut spans, "d", "delete", "del");
+                add_key(&mut spans, "e", "edit", "edit");
+                add_key(&mut spans, "/", "search", "find");
+                add_key(&mut spans, "s", "settings", "set");
+            }
         }
         InputMode::Search => {
             add_key(&mut spans, "Esc", "cancel", "esc");
@@ -196,12 +216,15 @@ fn render_help(f: &mut Frame, area: Rect, app: &App) {
                 if width < 40 { "Press key" } else { "Press any key to dismiss" },
                 Style::default()
                     .fg(theme::COLOR_ACCENT)
+                    .bg(theme::COLOR_SURFACE)
                     .add_modifier(Modifier::BOLD),
             ));
         }
     }
 
-    let help = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
+    let help = Paragraph::new(Line::from(spans))
+        .alignment(Alignment::Center)
+        .style(Style::default().bg(theme::COLOR_SURFACE));
     f.render_widget(help, area);
 }
 
@@ -388,6 +411,188 @@ fn render_notification(f: &mut Frame, area: Rect, msg: &str) {
         .alignment(Alignment::Center);
 
     f.render_widget(para, popup_area);
+}
+
+
+
+fn render_settings(f: &mut Frame, area: Rect, app: &App) {
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(" Settings ")
+        .border_style(Style::default().fg(theme::COLOR_MUTED));
+
+    let inner_area = block.inner(area);
+    f.render_widget(block, area);
+
+    match app.settings_sub_state {
+        crate::models::SettingsSubState::Menu => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // Title
+                    Constraint::Length(3), // Option 0: Change Password
+                    Constraint::Length(3), // Option 1: About
+                    Constraint::Length(1), // Hint
+                    Constraint::Min(0),    // App info/details
+                ])
+                .margin(1)
+                .split(inner_area);
+
+            let title_style = Style::default().fg(theme::COLOR_TEXT).add_modifier(Modifier::BOLD);
+            f.render_widget(Paragraph::new("Select settings option:").style(title_style), chunks[0]);
+
+            let opt0_style = if app.settings_menu_index == 0 {
+                Style::default().fg(theme::COLOR_PRIMARY).bg(theme::COLOR_SURFACE)
+            } else {
+                Style::default().fg(theme::COLOR_TEXT)
+            };
+
+            let opt1_style = if app.settings_menu_index == 1 {
+                Style::default().fg(theme::COLOR_PRIMARY).bg(theme::COLOR_SURFACE)
+            } else {
+                Style::default().fg(theme::COLOR_TEXT)
+            };
+
+            let opt0_text = if app.settings_menu_index == 0 {
+                " ▶  Change Master Password "
+            } else {
+                "    Change Master Password "
+            };
+
+            let opt1_text = if app.settings_menu_index == 1 {
+                " ▶  About & Info "
+            } else {
+                "    About & Info "
+            };
+
+            let opt0 = Paragraph::new(opt0_text)
+                .block(Block::bordered().border_style(opt0_style))
+                .style(opt0_style);
+
+            let opt1 = Paragraph::new(opt1_text)
+                .block(Block::bordered().border_style(opt1_style))
+                .style(opt1_style);
+
+            f.render_widget(opt0, chunks[1]);
+            f.render_widget(opt1, chunks[2]);
+
+            let hint = Paragraph::new("Use Up/Down Arrows or j/k to navigate  Enter select  Esc back to Keys")
+                .style(Style::default().fg(theme::COLOR_MUTED))
+                .alignment(Alignment::Center);
+            f.render_widget(hint, chunks[3]);
+
+            if app.settings_menu_index == 1 {
+                let info_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                    ])
+                    .split(chunks[4]);
+
+                let app_info = Paragraph::new("twofa-cli v0.1.0 - A sleek terminal TOTP authenticator.")
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(theme::COLOR_MUTED));
+                let license_info = Paragraph::new("License: MIT. Secure AES-256-GCM database encryption.")
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(theme::COLOR_MUTED));
+                f.render_widget(app_info, info_chunks[0]);
+                f.render_widget(license_info, info_chunks[1]);
+            }
+        }
+        crate::models::SettingsSubState::ChangePassword => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // Title
+                    Constraint::Length(3), // Old Password
+                    Constraint::Length(3), // New Password
+                    Constraint::Length(3), // Confirm Password
+                    Constraint::Length(1), // Hint
+                    Constraint::Min(0),    // Error message
+                ])
+                .margin(1)
+                .split(inner_area);
+
+            let title_style = Style::default().fg(theme::COLOR_TEXT).add_modifier(Modifier::BOLD);
+            let title = Paragraph::new("Change Master Password").style(title_style);
+            f.render_widget(title, chunks[0]);
+
+            let old_pwd_style = if app.change_pwd_field_index == 0 {
+                Style::default().fg(theme::COLOR_ACCENT)
+            } else {
+                Style::default().fg(theme::COLOR_PRIMARY)
+            };
+
+            let new_pwd_style = if app.change_pwd_field_index == 1 {
+                Style::default().fg(theme::COLOR_ACCENT)
+            } else {
+                Style::default().fg(theme::COLOR_PRIMARY)
+            };
+
+            let confirm_pwd_style = if app.change_pwd_field_index == 2 {
+                Style::default().fg(theme::COLOR_ACCENT)
+            } else {
+                Style::default().fg(theme::COLOR_PRIMARY)
+            };
+
+            let masked_old = "*".repeat(app.change_pwd_old.len());
+            let masked_new = "*".repeat(app.change_pwd_new.len());
+            let masked_confirm = "*".repeat(app.change_pwd_confirm.len());
+
+            let old_input = Paragraph::new(masked_old)
+                .block(Block::bordered().title(" Current Master Password ").border_style(old_pwd_style))
+                .style(Style::default().fg(theme::COLOR_TEXT));
+
+            let new_input = Paragraph::new(masked_new)
+                .block(Block::bordered().title(" New Master Password ").border_style(new_pwd_style))
+                .style(Style::default().fg(theme::COLOR_TEXT));
+
+            let confirm_input = Paragraph::new(masked_confirm)
+                .block(Block::bordered().title(" Confirm New Password ").border_style(confirm_pwd_style))
+                .style(Style::default().fg(theme::COLOR_TEXT));
+
+            f.render_widget(old_input, chunks[1]);
+            f.render_widget(new_input, chunks[2]);
+            f.render_widget(confirm_input, chunks[3]);
+
+            let hint = Paragraph::new("Tab/Arrows switch fields  Enter submit  Esc back to Menu")
+                .style(Style::default().fg(theme::COLOR_MUTED))
+                .alignment(Alignment::Center);
+            f.render_widget(hint, chunks[4]);
+
+            if let Some(ref err) = app.error_message {
+                let err_para = Paragraph::new(err.as_str())
+                    .style(Style::default().fg(theme::COLOR_RED))
+                    .alignment(Alignment::Center);
+                f.render_widget(err_para, chunks[5]);
+            }
+
+            let cursor_y = match app.change_pwd_field_index {
+                0 => chunks[1].y + 1,
+                1 => chunks[2].y + 1,
+                2 => chunks[3].y + 1,
+                _ => chunks[1].y + 1,
+            };
+            let buffer_len = match app.change_pwd_field_index {
+                0 => app.change_pwd_old.len(),
+                1 => app.change_pwd_new.len(),
+                2 => app.change_pwd_confirm.len(),
+                _ => 0,
+            };
+            let active_chunk = match app.change_pwd_field_index {
+                0 => chunks[1],
+                1 => chunks[2],
+                2 => chunks[3],
+                _ => chunks[1],
+            };
+            f.set_cursor_position((
+                active_chunk.x + 1 + (buffer_len as u16).min(active_chunk.width.saturating_sub(2)),
+                cursor_y,
+            ));
+        }
+    }
 }
 
 fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {

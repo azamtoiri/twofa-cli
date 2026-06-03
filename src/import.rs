@@ -53,15 +53,22 @@ pub fn parse_otpauth_uri(uri_str: &str) -> Result<OtpAuthUri, String> {
 
     let secret_base32 = secret.ok_or("Missing 'secret' parameter in otpauth URI")?;
 
+    let cleaned = secret_base32
+        .trim()
+        .replace(' ', "")
+        .replace('-', "")
+        .trim_end_matches('=')
+        .to_uppercase();
+
     // Validate base32 by trying to decode
-    totp_rs::Secret::Encoded(secret_base32.clone())
+    totp_rs::Secret::Encoded(cleaned.clone())
         .to_bytes()
         .map_err(|e| format!("Invalid base32 secret: {}", e))?;
 
     Ok(OtpAuthUri {
         label,
         issuer,
-        secret_base32,
+        secret_base32: cleaned,
         algorithm,
         digits,
         period,

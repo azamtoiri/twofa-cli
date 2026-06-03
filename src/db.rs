@@ -234,6 +234,42 @@ impl Database {
         Ok(())
     }
 
+    /// Change the master password. Decrypts all current secrets and re-encrypts them with the new password.
+    /// Verifies the old password first.
+    pub fn change_master_password(&mut self, old_password: &str, new_password: &str) -> Result<(), AppError> {
+        let (salt, verification) = self.load_vault_meta()?;
+        if let Err(_) = Vault::unlock(old_password, &salt, &verification) {
+            return Err(AppError::WrongPassword);
+        }
+
+        let entries = self.list_secrets()?;
+        let (new_vault, new_salt, new_verification) = Vault::create(new_password)?;
+
+        let tx = self.conn.transaction()?;
+
+        tx.execute(
+            "INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?1)",
+            params![new_salt],
+        )?;
+        tx.execute(
+            "INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('verification', ?1)",
+            params![new_verification],
+        )?;
+
+        for entry in &entries {
+            let new_encrypted = new_vault.encrypt(&entry.secret_base32)?;
+            tx.execute(
+                "UPDATE secrets SET secret_encrypted = ?1 WHERE id = ?2",
+                params![new_encrypted, entry.id],
+            )?;
+        }
+
+        tx.commit()?;
+        self.vault = new_vault;
+
+        Ok(())
+    }
+
     /// Check if the database has vault metadata (is initialized).
     pub fn is_initialized_raw(conn: &Connection) -> bool {
         conn.query_row(
@@ -243,5 +279,44 @@ impl Database {
         )
         .unwrap_or(0)
             > 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::Vault;
+
+    #[test]
+    fn test_change_master_password() {
+        let (vault, salt, verification) = Vault::create("old_password").unwrap();
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join("test_twofa_change_pwd.db");
+        if db_path.exists() {
+            let _ = std::fs::remove_file(&db_path);
+        }
+
+        let mut db = Database::open(&db_path, vault).unwrap();
+        db.save_vault_meta(&salt, &verification).unwrap();
+
+        // Add a secret
+        db.add_secret("test_service", "GSLUFLYRJC7ICGON", "SHA1", 6, 30).unwrap();
+
+        // Change master password
+        db.change_master_password("old_password", "new_password").unwrap();
+
+        // Verify secrets can still be loaded
+        let secrets = db.list_secrets().unwrap();
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].name, "test_service");
+        assert_eq!(secrets[0].secret_base32, "GSLUFLYRJC7ICGON");
+
+        // Unlock with new password
+        let (new_salt, new_verification) = db.load_vault_meta().unwrap();
+        let unlocked_vault = Vault::unlock("new_password", &new_salt, &new_verification);
+        assert!(unlocked_vault.is_ok());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&db_path);
     }
 }

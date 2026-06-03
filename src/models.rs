@@ -23,13 +23,19 @@ impl SecretEntry {
             other => return Err(format!("Unknown algorithm: {}", other)),
         };
 
-        let secret = totp_rs::Secret::Encoded(self.secret_base32.clone());
+        let cleaned = self.secret_base32
+            .trim()
+            .replace(' ', "")
+            .replace('-', "")
+            .trim_end_matches('=')
+            .to_uppercase();
+
+        let secret = totp_rs::Secret::Encoded(cleaned);
         let bytes = secret
             .to_bytes()
             .map_err(|e| format!("Invalid base32 secret: {}", e))?;
 
-        TOTP::new(algo, self.digits, 1, self.period, bytes)
-            .map_err(|e| format!("TOTP init error: {}", e))
+        Ok(TOTP::new_unchecked(algo, self.digits, 1, self.period, bytes))
     }
 
     /// Generate current code and seconds remaining
@@ -38,6 +44,13 @@ impl SecretEntry {
         let code = totp.generate_current().map_err(|e| format!("{}", e))?;
         let ttl = totp.ttl().map_err(|e| format!("{}", e))?;
         Ok((code, ttl))
+    }
+
+    /// Check if the entry has a valid configuration and can generate codes.
+    pub fn validate(&self) -> Result<(), String> {
+        let totp = self.to_totp()?;
+        let _code = totp.generate_current().map_err(|e| format!("Code generation failed: {}", e))?;
+        Ok(())
     }
 }
 
@@ -50,6 +63,18 @@ pub struct OtpAuthUri {
     pub algorithm: String,
     pub digits: usize,
     pub period: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppTab {
+    Keys,
+    Settings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsSubState {
+    Menu,
+    ChangePassword,
 }
 
 /// App UI mode
@@ -71,3 +96,34 @@ pub enum InputMode {
     },
     Notification(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SecretEntry;
+
+    #[test]
+    fn test_secret_entry_to_totp_normalization() {
+        let bad_secrets = vec![
+            "gsluflyrjc7icgon",
+            "GSLUFLYRJC7ICGON===",
+            "GSLU FLYR JC7I CGON",
+            "GSLU-FLYR-JC7I-CGON",
+            "  gsluflyrjc7icgon  ",
+        ];
+
+        for sec in bad_secrets {
+            let entry = SecretEntry {
+                id: 1,
+                name: "test".to_string(),
+                secret_base32: sec.to_string(),
+                algorithm: "SHA1".to_string(),
+                digits: 6,
+                period: 30,
+                sort_order: 1,
+            };
+            let totp_res = entry.to_totp();
+            assert!(totp_res.is_ok(), "Failed to normalize and convert secret '{}': {:?}", sec, totp_res.err());
+        }
+    }
+}
+

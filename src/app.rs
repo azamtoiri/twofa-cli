@@ -8,7 +8,7 @@ use crate::crypto::Vault;
 use crate::db::Database;
 use crate::errors::AppError;
 use crate::import::parse_otpauth_uri;
-use crate::models::{InputMode, SecretEntry};
+use crate::models::{InputMode, SecretEntry, AppTab, SettingsSubState};
 
 /// Computed display info for each entry
 pub struct TotpDisplay {
@@ -29,6 +29,13 @@ pub struct App {
     pub error_message: Option<String>,
     pub notification: Option<(String, Instant)>,
     pub should_quit: bool,
+    pub active_tab: AppTab,
+    pub change_pwd_old: String,
+    pub change_pwd_new: String,
+    pub change_pwd_confirm: String,
+    pub change_pwd_field_index: usize,
+    pub settings_sub_state: SettingsSubState,
+    pub settings_menu_index: usize,
 }
 
 impl App {
@@ -50,6 +57,13 @@ impl App {
             error_message: None,
             notification: None,
             should_quit: false,
+            active_tab: AppTab::Keys,
+            change_pwd_old: String::new(),
+            change_pwd_new: String::new(),
+            change_pwd_confirm: String::new(),
+            change_pwd_field_index: 0,
+            settings_sub_state: SettingsSubState::Menu,
+            settings_menu_index: 0,
         }
     }
 
@@ -57,12 +71,13 @@ impl App {
     pub fn compute_displays(&self) -> Vec<TotpDisplay> {
         self.entries
             .iter()
-            .filter_map(|e| {
-                e.generate().ok().map(|(code, ttl)| TotpDisplay {
+            .map(|e| {
+                let (code, ttl) = e.generate().unwrap_or_else(|_| ("ERROR".to_string(), 0));
+                TotpDisplay {
                     entry: e.clone(),
                     code,
                     ttl,
-                })
+                }
             })
             .collect()
     }
@@ -107,6 +122,11 @@ impl App {
         if matches!(self.input_mode, InputMode::Notification(_)) {
             self.notification = None;
             self.input_mode = InputMode::Normal;
+            return;
+        }
+
+        if self.active_tab == AppTab::Settings && matches!(self.input_mode, InputMode::Normal) {
+            self.handle_key_settings(key);
             return;
         }
 
@@ -159,6 +179,22 @@ impl App {
             KeyCode::Enter => {
                 if let Some(entry) = self.selected_entry() {
                     self.copy_code(&entry);
+                }
+            }
+            KeyCode::Char('s') => {
+                self.active_tab = AppTab::Settings;
+                self.change_pwd_old.clear();
+                self.change_pwd_new.clear();
+                self.change_pwd_confirm.clear();
+                self.change_pwd_field_index = 0;
+                self.error_message = None;
+                self.settings_sub_state = SettingsSubState::Menu;
+                self.settings_menu_index = 0;
+            }
+            KeyCode::Esc => {
+                if !self.search_input.is_empty() {
+                    self.search_input.clear();
+                    self.clamp_selected();
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => self.select_next(),
@@ -226,6 +262,119 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn handle_key_settings(&mut self, key: event::KeyEvent) {
+        if key.kind == KeyEventKind::Release {
+            return;
+        }
+
+        match self.settings_sub_state {
+            SettingsSubState::Menu => {
+                match key.code {
+                    KeyCode::Esc => {
+                        self.active_tab = AppTab::Keys;
+                        self.error_message = None;
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        self.settings_menu_index = (self.settings_menu_index + 1) % 2;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.settings_menu_index = (self.settings_menu_index + 1) % 2;
+                    }
+                    KeyCode::Enter => {
+                        if self.settings_menu_index == 0 {
+                            self.settings_sub_state = SettingsSubState::ChangePassword;
+                            self.change_pwd_old.clear();
+                            self.change_pwd_new.clear();
+                            self.change_pwd_confirm.clear();
+                            self.change_pwd_field_index = 0;
+                            self.error_message = None;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            SettingsSubState::ChangePassword => {
+                match key.code {
+                    KeyCode::Esc => {
+                        self.settings_sub_state = SettingsSubState::Menu;
+                        self.change_pwd_old.clear();
+                        self.change_pwd_new.clear();
+                        self.change_pwd_confirm.clear();
+                        self.change_pwd_field_index = 0;
+                        self.error_message = None;
+                    }
+                    KeyCode::Tab => {
+                        self.change_pwd_field_index = (self.change_pwd_field_index + 1) % 3;
+                    }
+                    KeyCode::Down => {
+                        self.change_pwd_field_index = (self.change_pwd_field_index + 1) % 3;
+                    }
+                    KeyCode::Up => {
+                        self.change_pwd_field_index = (self.change_pwd_field_index + 2) % 3;
+                    }
+                    KeyCode::Enter => {
+                        self.commit_change_password();
+                    }
+                    KeyCode::Char(c) => {
+                        self.error_message = None;
+                        match self.change_pwd_field_index {
+                            0 => self.change_pwd_old.push(c),
+                            1 => self.change_pwd_new.push(c),
+                            2 => self.change_pwd_confirm.push(c),
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        self.error_message = None;
+                        match self.change_pwd_field_index {
+                            0 => { self.change_pwd_old.pop(); }
+                            1 => { self.change_pwd_new.pop(); }
+                            2 => { self.change_pwd_confirm.pop(); }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn commit_change_password(&mut self) {
+        let old_pwd = self.change_pwd_old.clone();
+        let new_pwd = self.change_pwd_new.clone();
+        let confirm_pwd = self.change_pwd_confirm.clone();
+
+        if old_pwd.is_empty() {
+            self.error_message = Some("Current password is required".into());
+            return;
+        }
+
+        if new_pwd.is_empty() {
+            self.error_message = Some("New password cannot be empty".into());
+            return;
+        }
+
+        if new_pwd != confirm_pwd {
+            self.error_message = Some("New passwords do not match".into());
+            return;
+        }
+
+        match self.db.change_master_password(&old_pwd, &new_pwd) {
+            Ok(_) => {
+                self.change_pwd_old.clear();
+                self.change_pwd_new.clear();
+                self.change_pwd_confirm.clear();
+                self.change_pwd_field_index = 0;
+                self.error_message = None;
+                self.settings_sub_state = SettingsSubState::Menu;
+                self.show_notification("Password changed successfully!");
+            }
+            Err(e) => {
+                self.error_message = Some(format!("Error: {}", e));
+            }
         }
     }
 
@@ -336,7 +485,12 @@ impl App {
                 }
             }
         } else {
-            let clean = secret_raw.replace(' ', "").to_uppercase();
+            let clean = secret_raw
+                .trim()
+                .replace(' ', "")
+                .replace('-', "")
+                .trim_end_matches('=')
+                .to_uppercase();
             match totp_rs::Secret::Encoded(clean.clone()).to_bytes() {
                 Ok(_) => (name, clean, "SHA1".into(), 6, 30),
                 Err(e) => {
@@ -345,6 +499,20 @@ impl App {
                 }
             }
         };
+
+        let temp_entry = SecretEntry {
+            id: 0,
+            name: final_name.clone(),
+            secret_base32: final_secret.clone(),
+            algorithm: algo.clone(),
+            digits,
+            period: period as u64,
+            sort_order: 0,
+        };
+        if let Err(e) = temp_entry.validate() {
+            self.error_message = Some(format!("Invalid secret: {}", e));
+            return;
+        }
 
         match self.db.add_secret(&final_name, &final_secret, &algo, digits, period as u64) {
             Ok(_) => {

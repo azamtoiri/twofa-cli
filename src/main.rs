@@ -91,7 +91,25 @@ fn main() -> Result<(), anyhow::Error> {
             anyhow::bail!("Usage: twofa --add <NAME> <BASE32_SECRET>");
         }
         let (db, _) = password_flow(&db_path)?;
-        db.add_secret(&add_args[0], &add_args[1], "SHA1", 6, 30)?;
+        let clean_secret = add_args[1]
+            .trim()
+            .replace(' ', "")
+            .replace('-', "")
+            .trim_end_matches('=')
+            .to_uppercase();
+        
+        let temp_entry = crate::models::SecretEntry {
+            id: 0,
+            name: add_args[0].clone(),
+            secret_base32: clean_secret.clone(),
+            algorithm: "SHA1".to_string(),
+            digits: 6,
+            period: 30,
+            sort_order: 0,
+        };
+        temp_entry.validate().map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        db.add_secret(&add_args[0], &clean_secret, "SHA1", 6, 30)?;
         println!("Added secret '{}'", add_args[0]);
         return Ok(());
     }
@@ -157,9 +175,28 @@ fn main() -> Result<(), anyhow::Error> {
         // Try parsing as JSON list of SecretEntry first
         if let Ok(entries_to_import) = serde_json::from_str::<Vec<crate::models::SecretEntry>>(&content) {
             for entry in entries_to_import {
+                let clean_secret = entry.secret_base32
+                    .trim()
+                    .replace(' ', "")
+                    .replace('-', "")
+                    .trim_end_matches('=')
+                    .to_uppercase();
+                let temp_entry = crate::models::SecretEntry {
+                    id: 0,
+                    name: entry.name.clone(),
+                    secret_base32: clean_secret.clone(),
+                    algorithm: entry.algorithm.clone(),
+                    digits: entry.digits,
+                    period: entry.period,
+                    sort_order: 0,
+                };
+                if let Err(e) = temp_entry.validate() {
+                    eprintln!("Warning: Skipping invalid secret '{}': {}", entry.name, e);
+                    continue;
+                }
                 db.add_secret(
                     &entry.name,
-                    &entry.secret_base32,
+                    &clean_secret,
                     &entry.algorithm,
                     entry.digits,
                     entry.period,
@@ -175,6 +212,19 @@ fn main() -> Result<(), anyhow::Error> {
                 }
                 if trimmed.starts_with("otpauth://") {
                     if let Ok(uri) = crate::import::parse_otpauth_uri(trimmed) {
+                        let temp_entry = crate::models::SecretEntry {
+                            id: 0,
+                            name: uri.label.clone(),
+                            secret_base32: uri.secret_base32.clone(),
+                            algorithm: uri.algorithm.clone(),
+                            digits: uri.digits,
+                            period: uri.period,
+                            sort_order: 0,
+                        };
+                        if let Err(e) = temp_entry.validate() {
+                            eprintln!("Warning: Skipping invalid URI secret '{}': {}", uri.label, e);
+                            continue;
+                        }
                         db.add_secret(
                             &uri.label,
                             &uri.secret_base32,
@@ -185,10 +235,26 @@ fn main() -> Result<(), anyhow::Error> {
                         imported += 1;
                     }
                 } else if let Some((name, secret)) = trimmed.split_once(',') {
-                    let clean_secret = secret.trim().replace(' ', "").to_uppercase();
-                    if totp_rs::Secret::Encoded(clean_secret.clone()).to_bytes().is_ok() {
+                    let clean_secret = secret
+                        .trim()
+                        .replace(' ', "")
+                        .replace('-', "")
+                        .trim_end_matches('=')
+                        .to_uppercase();
+                    let temp_entry = crate::models::SecretEntry {
+                        id: 0,
+                        name: name.trim().to_string(),
+                        secret_base32: clean_secret.clone(),
+                        algorithm: "SHA1".to_string(),
+                        digits: 6,
+                        period: 30,
+                        sort_order: 0,
+                    };
+                    if temp_entry.validate().is_ok() {
                         db.add_secret(name.trim(), &clean_secret, "SHA1", 6, 30)?;
                         imported += 1;
+                    } else {
+                        eprintln!("Warning: Skipping invalid CSV secret '{}'", name.trim());
                     }
                 }
             }
