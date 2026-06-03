@@ -20,12 +20,53 @@ use crossterm::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::app::{App, password_flow};
+use crate::app::{App, password_flow_with_key};
+
+const HELP_TEMPLATE: &str = "\
+TUI KEYBOARD SHORTCUTS (NORMAL MODE):
+  Enter         Copy selected TOTP code to clipboard
+  a             Add a new 2FA secret (opens input form)
+  d             Delete the selected 2FA secret
+  e             Edit the selected 2FA secret's name
+  /             Search and filter secrets by name
+  s             Open Settings menu (change master password, view keys, about)
+  Esc           Clear search filter / back to normal mode
+  q             Quit the application
+  Up/Down, j/k  Navigate list of secrets
+
+TUI KEYBOARD SHORTCUTS (SETTINGS MODE):
+  Up/Down, j/k  Navigate settings menu
+  Enter         Select highlighted settings option
+  Esc           Go back to main list view or settings menu
+
+TUI KEYBOARD SHORTCUTS (INPUT FORMS):
+  Tab / Arrows  Switch between input fields
+  Enter         Submit the form
+  Esc           Cancel input and discard changes
+
+CLI USAGE EXAMPLES:
+  Start TUI mode:
+    twofa-cli
+
+  Retrieve code programmatically (prints & copies to clipboard):
+    twofa-cli get-code <NAME> --password <PASSWORD>
+    twofa-cli -s <NAME> -p <PASSWORD>
+
+  List all stored secrets and their current codes:
+    twofa-cli --list -p <PASSWORD>
+
+  Add a new secret from CLI:
+    twofa-cli --add <NAME> <SECRET> -p <PASSWORD>
+
+  Import/Export secrets:
+    twofa-cli --import <PATH_TO_FILE>
+    twofa-cli --export <PATH_TO_FILE>
+";
 
 /// A sleek TUI 2FA authenticator — manage and generate TOTP codes in your terminal.
 #[derive(Parser)]
-#[command(name = "twofa")]
-#[command(author, version, about, long_about = None)]
+#[command(name = "twofa-cli")]
+#[command(author, version, about, long_about = None, after_help = HELP_TEMPLATE)]
 struct Cli {
     /// Print code for a named secret and exit (no TUI)
     #[arg(short, long, value_name = "NAME")]
@@ -50,6 +91,27 @@ struct Cli {
     /// Import secrets from a decrypted JSON or otpauth:// URI file path
     #[arg(long, value_name = "PATH")]
     import: Option<PathBuf>,
+
+    /// Master password to decrypt the database (bypasses interactive prompt)
+    #[arg(short, long, value_name = "PASSWORD")]
+    password: Option<String>,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(clap::Subcommand)]
+enum Commands {
+    /// Generate and copy TOTP code for a secret without TUI
+    #[command(name = "get-code")]
+    GetCode {
+        /// Name of the secret
+        name: String,
+
+        /// Master password to decrypt the database
+        #[arg(short, long)]
+        password: Option<String>,
+    },
 }
 
 fn default_db_path() -> String {
@@ -85,12 +147,29 @@ fn main() -> Result<(), anyhow::Error> {
         std::fs::create_dir_all(parent)?;
     }
 
+    // --- Subcommands ---
+    if let Some(Commands::GetCode { name, password }) = &cli.command {
+        let pwd_to_use = password.as_deref().or(cli.password.as_deref());
+        let (_, entries) = password_flow_with_key(&db_path, pwd_to_use)?;
+        let entry = entries
+            .iter()
+            .find(|e| e.name == *name)
+            .ok_or_else(|| anyhow::anyhow!("Secret '{}' not found", name))?;
+        let (code, ttl) = entry.generate().map_err(|e| anyhow::anyhow!("{}", e))?;
+        println!("{} (expires in {}s)", code, ttl);
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            let _ = clipboard.set_text(code.clone());
+            println!("(Copied to clipboard)");
+        }
+        return Ok(());
+    }
+
     // --- CLI add mode ---
     if let Some(add_args) = cli.add {
         if add_args.len() != 2 {
             anyhow::bail!("Usage: twofa --add <NAME> <BASE32_SECRET>");
         }
-        let (db, _) = password_flow(&db_path)?;
+        let (db, _) = password_flow_with_key(&db_path, cli.password.as_deref())?;
         let clean_secret = add_args[1]
             .trim()
             .replace(' ', "")
@@ -116,19 +195,23 @@ fn main() -> Result<(), anyhow::Error> {
 
     // --- One-shot: print code for named secret ---
     if let Some(name) = cli.secret {
-        let (_, entries) = password_flow(&db_path)?;
+        let (_, entries) = password_flow_with_key(&db_path, cli.password.as_deref())?;
         let entry = entries
             .iter()
             .find(|e| e.name == name)
             .ok_or_else(|| anyhow::anyhow!("Secret '{}' not found", name))?;
         let (code, ttl) = entry.generate().map_err(|e| anyhow::anyhow!("{}", e))?;
         println!("{} (expires in {}s)", code, ttl);
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            let _ = clipboard.set_text(code.clone());
+            println!("(Copied to clipboard)");
+        }
         return Ok(());
     }
 
     // --- List mode ---
     if cli.list {
-        let (_, entries) = password_flow(&db_path)?;
+        let (_, entries) = password_flow_with_key(&db_path, cli.password.as_deref())?;
         if entries.is_empty() {
             println!("No secrets stored.");
             return Ok(());
@@ -144,7 +227,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     // --- Export mode ---
     if let Some(export_path) = cli.export {
-        let (_, entries) = password_flow(&db_path)?;
+        let (_, entries) = password_flow_with_key(&db_path, cli.password.as_deref())?;
         if entries.is_empty() {
             println!("No secrets to export.");
             return Ok(());
@@ -168,7 +251,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     // --- Import mode ---
     if let Some(import_path) = cli.import {
-        let (db, _) = password_flow(&db_path)?;
+        let (db, _) = password_flow_with_key(&db_path, cli.password.as_deref())?;
         let content = std::fs::read_to_string(&import_path)?;
         let mut imported = 0;
 
@@ -265,7 +348,7 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     // --- TUI mode ---
-    let (db, entries) = password_flow(&db_path)?;
+    let (db, entries) = password_flow_with_key(&db_path, cli.password.as_deref())?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();

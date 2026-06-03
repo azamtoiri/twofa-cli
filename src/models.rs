@@ -75,6 +75,7 @@ pub enum AppTab {
 pub enum SettingsSubState {
     Menu,
     ChangePassword,
+    KeysHelp,
 }
 
 /// App UI mode

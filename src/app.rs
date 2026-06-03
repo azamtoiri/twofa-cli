@@ -278,10 +278,10 @@ impl App {
                         self.error_message = None;
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        self.settings_menu_index = (self.settings_menu_index + 1) % 2;
+                        self.settings_menu_index = (self.settings_menu_index + 1) % 3;
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
-                        self.settings_menu_index = (self.settings_menu_index + 1) % 2;
+                        self.settings_menu_index = (self.settings_menu_index + 2) % 3;
                     }
                     KeyCode::Enter => {
                         if self.settings_menu_index == 0 {
@@ -291,9 +291,16 @@ impl App {
                             self.change_pwd_confirm.clear();
                             self.change_pwd_field_index = 0;
                             self.error_message = None;
+                        } else if self.settings_menu_index == 1 {
+                            self.settings_sub_state = SettingsSubState::KeysHelp;
                         }
                     }
                     _ => {}
+                }
+            }
+            SettingsSubState::KeysHelp => {
+                if key.code == KeyCode::Esc {
+                    self.settings_sub_state = SettingsSubState::Menu;
                 }
             }
             SettingsSubState::ChangePassword => {
@@ -592,6 +599,14 @@ impl App {
 
 /// Password prompt flow — runs before TUI starts.
 pub fn password_flow(db_path: &PathBuf) -> Result<(Database, Vec<SecretEntry>), AppError> {
+    password_flow_with_key(db_path, None)
+}
+
+/// Password flow allowing programmatic password injection.
+pub fn password_flow_with_key(
+    db_path: &PathBuf,
+    provided_password: Option<&str>,
+) -> Result<(Database, Vec<SecretEntry>), AppError> {
     use std::io::{self, Write};
 
     let needs_init = if db_path.exists() {
@@ -605,21 +620,27 @@ pub fn password_flow(db_path: &PathBuf) -> Result<(Database, Vec<SecretEntry>), 
     };
 
     if needs_init {
-        println!("First run — create a master password to encrypt your secrets.");
-        print!("Master password: ");
-        io::stdout().flush()?;
-        let password = read_password_stdin()?;
+        let password = match provided_password {
+            Some(pwd) => pwd.to_string(),
+            None => {
+                println!("First run — create a master password to encrypt your secrets.");
+                print!("Master password: ");
+                io::stdout().flush()?;
+                let p = read_password_stdin()?;
 
-        print!("Confirm password: ");
-        io::stdout().flush()?;
-        let confirm = read_password_stdin()?;
+                print!("Confirm password: ");
+                io::stdout().flush()?;
+                let confirm = read_password_stdin()?;
 
-        if password != confirm {
-            return Err(AppError::General("Passwords do not match".into()));
-        }
-        if password.is_empty() {
-            return Err(AppError::General("Password cannot be empty".into()));
-        }
+                if p != confirm {
+                    return Err(AppError::General("Passwords do not match".into()));
+                }
+                if p.is_empty() {
+                    return Err(AppError::General("Password cannot be empty".into()));
+                }
+                p
+            }
+        };
 
         let (vault, salt, verification) = Vault::create(&password)?;
         let db = Database::open(db_path, vault)?;
@@ -627,9 +648,14 @@ pub fn password_flow(db_path: &PathBuf) -> Result<(Database, Vec<SecretEntry>), 
         let entries = db.list_secrets()?;
         Ok((db, entries))
     } else {
-        print!("Enter master password: ");
-        io::stdout().flush()?;
-        let password = read_password_stdin()?;
+        let password = match provided_password {
+            Some(pwd) => pwd.to_string(),
+            None => {
+                print!("Enter master password: ");
+                io::stdout().flush()?;
+                read_password_stdin()?
+            }
+        };
 
         let conn = rusqlite::Connection::open(db_path)?;
         if !Database::is_initialized_raw(&conn) {

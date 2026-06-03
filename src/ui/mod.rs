@@ -431,7 +431,8 @@ fn render_settings(f: &mut Frame, area: Rect, app: &App) {
                 .constraints([
                     Constraint::Length(1), // Title
                     Constraint::Length(3), // Option 0: Change Password
-                    Constraint::Length(3), // Option 1: About
+                    Constraint::Length(3), // Option 1: Keys & Hotkeys
+                    Constraint::Length(3), // Option 2: About & Info
                     Constraint::Length(1), // Hint
                     Constraint::Min(0),    // App info/details
                 ])
@@ -453,6 +454,12 @@ fn render_settings(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(theme::COLOR_TEXT)
             };
 
+            let opt2_style = if app.settings_menu_index == 2 {
+                Style::default().fg(theme::COLOR_PRIMARY).bg(theme::COLOR_SURFACE)
+            } else {
+                Style::default().fg(theme::COLOR_TEXT)
+            };
+
             let opt0_text = if app.settings_menu_index == 0 {
                 " ▶  Change Master Password "
             } else {
@@ -460,6 +467,12 @@ fn render_settings(f: &mut Frame, area: Rect, app: &App) {
             };
 
             let opt1_text = if app.settings_menu_index == 1 {
+                " ▶  Keys & Hotkeys "
+            } else {
+                "    Keys & Hotkeys "
+            };
+
+            let opt2_text = if app.settings_menu_index == 2 {
                 " ▶  About & Info "
             } else {
                 "    About & Info "
@@ -473,23 +486,27 @@ fn render_settings(f: &mut Frame, area: Rect, app: &App) {
                 .block(Block::bordered().border_style(opt1_style))
                 .style(opt1_style);
 
+            let opt2 = Paragraph::new(opt2_text)
+                .block(Block::bordered().border_style(opt2_style))
+                .style(opt2_style);
+
             f.render_widget(opt0, chunks[1]);
             f.render_widget(opt1, chunks[2]);
+            f.render_widget(opt2, chunks[3]);
 
-            let hint = Paragraph::new("Use Up/Down Arrows or j/k to navigate  Enter select  Esc back to Keys")
+            let hint = Paragraph::new("Use Up/Down Arrows or j/k to navigate  Enter select  Esc back to Keys list")
                 .style(Style::default().fg(theme::COLOR_MUTED))
                 .alignment(Alignment::Center);
-            f.render_widget(hint, chunks[3]);
+            f.render_widget(hint, chunks[4]);
 
-            if app.settings_menu_index == 1 {
+            if app.settings_menu_index == 2 {
                 let info_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(1),
                         Constraint::Length(1),
-                        Constraint::Length(1),
                     ])
-                    .split(chunks[4]);
+                    .split(chunks[5]);
 
                 let app_info = Paragraph::new("twofa-cli v0.1.0 - A sleek terminal TOTP authenticator.")
                     .alignment(Alignment::Center)
@@ -500,6 +517,104 @@ fn render_settings(f: &mut Frame, area: Rect, app: &App) {
                 f.render_widget(app_info, info_chunks[0]);
                 f.render_widget(license_info, info_chunks[1]);
             }
+        }
+        crate::models::SettingsSubState::KeysHelp => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // Title
+                    Constraint::Min(0),    // Hotkeys list
+                    Constraint::Length(1), // Back hint
+                ])
+                .margin(1)
+                .split(inner_area);
+
+            let title_style = Style::default().fg(theme::COLOR_PRIMARY).add_modifier(Modifier::BOLD);
+            f.render_widget(Paragraph::new("Keyboard Shortcuts & Hotkeys").style(title_style).alignment(Alignment::Center), chunks[0]);
+
+            let hotkeys_text = vec![
+                Line::from(vec![
+                    Span::styled(" [ Normal Mode ] ", Style::default().fg(theme::COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Enter       ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Copy selected TOTP code to clipboard"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  a           ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Add a new 2FA secret (Name and Secret Key)"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  d           ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Delete the selected 2FA secret"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  e           ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Edit name of the selected 2FA secret"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  /           ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Search/filter secrets by name"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  s           ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Open Settings menu"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Esc         ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Clear search filter"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  q           ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Quit the application"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Up/Down, j/k", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Navigate the list of secrets"),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(" [ Settings Mode ] ", Style::default().fg(theme::COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Up/Down, j/k", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Navigate settings menu"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Enter       ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Select highlighted settings option"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Esc         ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Go back to previous menu / main list"),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(" [ Forms (Add / Edit / Password) ] ", Style::default().fg(theme::COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Tab/Arrows  ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Switch between input fields"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Enter       ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Submit form and save changes"),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Esc         ", Style::default().fg(theme::COLOR_PRIMARY)),
+                    Span::raw("Cancel editing and discard changes"),
+                ]),
+            ];
+
+            let hotkeys_para = Paragraph::new(hotkeys_text)
+                .style(Style::default().fg(theme::COLOR_TEXT))
+                .block(Block::bordered().border_style(Style::default().fg(theme::COLOR_MUTED)));
+            f.render_widget(hotkeys_para, chunks[1]);
+
+            let hint = Paragraph::new("Press Esc to go back to Settings Menu")
+                .style(Style::default().fg(theme::COLOR_MUTED))
+                .alignment(Alignment::Center);
+            f.render_widget(hint, chunks[2]);
         }
         crate::models::SettingsSubState::ChangePassword => {
             let chunks = Layout::default()
