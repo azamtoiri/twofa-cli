@@ -52,8 +52,12 @@ pub fn render(f: &mut Frame, app: &mut App) {
         InputMode::Editing { .. } => render_edit_dialog(f, area, app),
         InputMode::ConfirmDelete { .. } => render_confirm_dialog(f, area, app),
         InputMode::PasswordPrompt { .. } => render_password_dialog(f, area, app),
-        InputMode::Notification(msg) => render_notification(f, area, msg),
         _ => {}
+    }
+
+    // Notification overlay — non-blocking, shown on top of list
+    if let Some((msg, _)) = &app.notification {
+        render_notification(f, area, msg);
     }
 }
 
@@ -211,15 +215,7 @@ fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
             add_key(&mut spans, "Enter", "submit", "ok");
             add_key(&mut spans, "Esc", "quit", "esc");
         }
-        InputMode::Notification(_) => {
-            spans.push(Span::styled(
-                if width < 40 { "Press key" } else { "Press any key to dismiss" },
-                Style::default()
-                    .fg(theme::COLOR_ACCENT)
-                    .bg(theme::COLOR_SURFACE)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
+        InputMode::Notification(_) => {}
     }
 
     let help = Paragraph::new(Line::from(spans))

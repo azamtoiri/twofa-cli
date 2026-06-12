@@ -385,6 +385,8 @@ fn run_tui(
             return Ok(());
         }
 
+        app.tick();
+
         if event::poll(tick_rate)? {
             if let Event::Key(key) = event::read()? {
                 app.handle_key(key);

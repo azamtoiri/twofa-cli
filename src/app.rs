@@ -8,7 +8,7 @@ use crate::crypto::Vault;
 use crate::db::Database;
 use crate::errors::AppError;
 use crate::import::parse_otpauth_uri;
-use crate::models::{InputMode, SecretEntry, AppTab, SettingsSubState};
+use crate::models::{AppTab, InputMode, SecretEntry, SettingsSubState};
 
 /// Computed display info for each entry
 pub struct TotpDisplay {
@@ -119,12 +119,6 @@ impl App {
             return;
         }
 
-        if matches!(self.input_mode, InputMode::Notification(_)) {
-            self.notification = None;
-            self.input_mode = InputMode::Normal;
-            return;
-        }
-
         if self.active_tab == AppTab::Settings && matches!(self.input_mode, InputMode::Normal) {
             self.handle_key_settings(key);
             return;
@@ -145,6 +139,9 @@ impl App {
         if key.kind == KeyEventKind::Release {
             return;
         }
+
+        // Dismiss notification on any key
+        self.notification = None;
 
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
@@ -271,81 +268,83 @@ impl App {
         }
 
         match self.settings_sub_state {
-            SettingsSubState::Menu => {
-                match key.code {
-                    KeyCode::Esc => {
-                        self.active_tab = AppTab::Keys;
-                        self.error_message = None;
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        self.settings_menu_index = (self.settings_menu_index + 1) % 3;
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        self.settings_menu_index = (self.settings_menu_index + 2) % 3;
-                    }
-                    KeyCode::Enter => {
-                        if self.settings_menu_index == 0 {
-                            self.settings_sub_state = SettingsSubState::ChangePassword;
-                            self.change_pwd_old.clear();
-                            self.change_pwd_new.clear();
-                            self.change_pwd_confirm.clear();
-                            self.change_pwd_field_index = 0;
-                            self.error_message = None;
-                        } else if self.settings_menu_index == 1 {
-                            self.settings_sub_state = SettingsSubState::KeysHelp;
-                        }
-                    }
-                    _ => {}
+            SettingsSubState::Menu => match key.code {
+                KeyCode::Esc => {
+                    self.active_tab = AppTab::Keys;
+                    self.error_message = None;
                 }
-            }
-            SettingsSubState::KeysHelp => {
-                if key.code == KeyCode::Esc {
-                    self.settings_sub_state = SettingsSubState::Menu;
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.settings_menu_index = (self.settings_menu_index + 1) % 3;
                 }
-            }
-            SettingsSubState::ChangePassword => {
-                match key.code {
-                    KeyCode::Esc => {
-                        self.settings_sub_state = SettingsSubState::Menu;
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.settings_menu_index = (self.settings_menu_index + 2) % 3;
+                }
+                KeyCode::Enter => {
+                    if self.settings_menu_index == 0 {
+                        self.settings_sub_state = SettingsSubState::ChangePassword;
                         self.change_pwd_old.clear();
                         self.change_pwd_new.clear();
                         self.change_pwd_confirm.clear();
                         self.change_pwd_field_index = 0;
                         self.error_message = None;
+                    } else if self.settings_menu_index == 1 {
+                        self.settings_sub_state = SettingsSubState::KeysHelp;
                     }
-                    KeyCode::Tab => {
-                        self.change_pwd_field_index = (self.change_pwd_field_index + 1) % 3;
-                    }
-                    KeyCode::Down => {
-                        self.change_pwd_field_index = (self.change_pwd_field_index + 1) % 3;
-                    }
-                    KeyCode::Up => {
-                        self.change_pwd_field_index = (self.change_pwd_field_index + 2) % 3;
-                    }
-                    KeyCode::Enter => {
-                        self.commit_change_password();
-                    }
-                    KeyCode::Char(c) => {
-                        self.error_message = None;
-                        match self.change_pwd_field_index {
-                            0 => self.change_pwd_old.push(c),
-                            1 => self.change_pwd_new.push(c),
-                            2 => self.change_pwd_confirm.push(c),
-                            _ => {}
-                        }
-                    }
-                    KeyCode::Backspace => {
-                        self.error_message = None;
-                        match self.change_pwd_field_index {
-                            0 => { self.change_pwd_old.pop(); }
-                            1 => { self.change_pwd_new.pop(); }
-                            2 => { self.change_pwd_confirm.pop(); }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
+                }
+                _ => {}
+            },
+            SettingsSubState::KeysHelp => {
+                if key.code == KeyCode::Esc {
+                    self.settings_sub_state = SettingsSubState::Menu;
                 }
             }
+            SettingsSubState::ChangePassword => match key.code {
+                KeyCode::Esc => {
+                    self.settings_sub_state = SettingsSubState::Menu;
+                    self.change_pwd_old.clear();
+                    self.change_pwd_new.clear();
+                    self.change_pwd_confirm.clear();
+                    self.change_pwd_field_index = 0;
+                    self.error_message = None;
+                }
+                KeyCode::Tab => {
+                    self.change_pwd_field_index = (self.change_pwd_field_index + 1) % 3;
+                }
+                KeyCode::Down => {
+                    self.change_pwd_field_index = (self.change_pwd_field_index + 1) % 3;
+                }
+                KeyCode::Up => {
+                    self.change_pwd_field_index = (self.change_pwd_field_index + 2) % 3;
+                }
+                KeyCode::Enter => {
+                    self.commit_change_password();
+                }
+                KeyCode::Char(c) => {
+                    self.error_message = None;
+                    match self.change_pwd_field_index {
+                        0 => self.change_pwd_old.push(c),
+                        1 => self.change_pwd_new.push(c),
+                        2 => self.change_pwd_confirm.push(c),
+                        _ => {}
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.error_message = None;
+                    match self.change_pwd_field_index {
+                        0 => {
+                            self.change_pwd_old.pop();
+                        }
+                        1 => {
+                            self.change_pwd_new.pop();
+                        }
+                        2 => {
+                            self.change_pwd_confirm.pop();
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            },
         }
     }
 
@@ -482,30 +481,36 @@ impl App {
             return;
         }
 
-        let (final_name, final_secret, algo, digits, period) = if secret_raw.starts_with("otpauth://")
-        {
-            match parse_otpauth_uri(&secret_raw) {
-                Ok(uri) => (uri.label, uri.secret_base32, uri.algorithm, uri.digits, uri.period),
-                Err(e) => {
-                    self.error_message = Some(format!("Invalid URI: {}", e));
-                    return;
+        let (final_name, final_secret, algo, digits, period) =
+            if secret_raw.starts_with("otpauth://") {
+                match parse_otpauth_uri(&secret_raw) {
+                    Ok(uri) => (
+                        uri.label,
+                        uri.secret_base32,
+                        uri.algorithm,
+                        uri.digits,
+                        uri.period,
+                    ),
+                    Err(e) => {
+                        self.error_message = Some(format!("Invalid URI: {}", e));
+                        return;
+                    }
                 }
-            }
-        } else {
-            let clean = secret_raw
-                .trim()
-                .replace(' ', "")
-                .replace('-', "")
-                .trim_end_matches('=')
-                .to_uppercase();
-            match totp_rs::Secret::Encoded(clean.clone()).to_bytes() {
-                Ok(_) => (name, clean, "SHA1".into(), 6, 30),
-                Err(e) => {
-                    self.error_message = Some(format!("Invalid Base32: {}", e));
-                    return;
+            } else {
+                let clean = secret_raw
+                    .trim()
+                    .replace(' ', "")
+                    .replace('-', "")
+                    .trim_end_matches('=')
+                    .to_uppercase();
+                match totp_rs::Secret::Encoded(clean.clone()).to_bytes() {
+                    Ok(_) => (name, clean, "SHA1".into(), 6, 30),
+                    Err(e) => {
+                        self.error_message = Some(format!("Invalid Base32: {}", e));
+                        return;
+                    }
                 }
-            }
-        };
+            };
 
         let temp_entry = SecretEntry {
             id: 0,
@@ -521,7 +526,10 @@ impl App {
             return;
         }
 
-        match self.db.add_secret(&final_name, &final_secret, &algo, digits, period as u64) {
+        match self
+            .db
+            .add_secret(&final_name, &final_secret, &algo, digits, period as u64)
+        {
             Ok(_) => {
                 self.reload_entries();
                 self.input_mode = InputMode::Normal;
@@ -553,7 +561,15 @@ impl App {
 
     pub fn show_notification(&mut self, msg: &str) {
         self.notification = Some((msg.to_string(), Instant::now()));
-        self.input_mode = InputMode::Notification(msg.to_string());
+    }
+
+    /// Auto-dismiss notification after 3 seconds.
+    pub fn tick(&mut self) {
+        if let Some((_, timestamp)) = &self.notification {
+            if timestamp.elapsed().as_secs() >= 1 {
+                self.notification = None;
+            }
+        }
     }
 
     fn select_next(&mut self) {
@@ -562,11 +578,7 @@ impl App {
             return;
         }
         let i = self.list_state.selected().unwrap_or(0);
-        let next = if i >= len.saturating_sub(1) {
-            0
-        } else {
-            i + 1
-        };
+        let next = if i >= len.saturating_sub(1) { 0 } else { i + 1 };
         self.list_state.select(Some(next));
     }
 
@@ -576,11 +588,7 @@ impl App {
             return;
         }
         let i = self.list_state.selected().unwrap_or(0);
-        let prev = if i == 0 {
-            len.saturating_sub(1)
-        } else {
-            i - 1
-        };
+        let prev = if i == 0 { len.saturating_sub(1) } else { i - 1 };
         self.list_state.select(Some(prev));
     }
 
