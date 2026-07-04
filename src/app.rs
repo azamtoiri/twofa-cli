@@ -36,6 +36,8 @@ pub struct App {
     pub change_pwd_field_index: usize,
     pub settings_sub_state: SettingsSubState,
     pub settings_menu_index: usize,
+    pub sort_order: crate::models::SortOrder,
+    pub cursor_position: usize,
 }
 
 impl App {
@@ -64,6 +66,8 @@ impl App {
             change_pwd_field_index: 0,
             settings_sub_state: SettingsSubState::Menu,
             settings_menu_index: 0,
+            sort_order: crate::models::SortOrder::CreationDate,
+            cursor_position: 0,
         }
     }
 
@@ -88,6 +92,14 @@ impl App {
         if !self.search_input.is_empty() {
             let q = self.search_input.to_lowercase();
             displays.retain(|d| d.entry.name.to_lowercase().contains(&q));
+        }
+        match self.sort_order {
+            crate::models::SortOrder::CreationDate => {
+                displays.sort_by_key(|d| d.entry.id);
+            }
+            crate::models::SortOrder::Name => {
+                displays.sort_by(|a, b| a.entry.name.to_lowercase().cmp(&b.entry.name.to_lowercase()));
+            }
         }
         displays
     }
@@ -131,6 +143,7 @@ impl App {
             InputMode::Editing { .. } => self.handle_key_editing(key),
             InputMode::ConfirmDelete { .. } => self.handle_key_confirm(key),
             InputMode::PasswordPrompt { .. } => self.handle_key_password(key),
+            InputMode::PasswordPromptForEdit { .. } => self.handle_key_password_edit(key),
             InputMode::Notification(_) => {}
         }
     }
@@ -150,6 +163,7 @@ impl App {
                 self.input_buffer.clear();
                 self.secret_buffer.clear();
                 self.add_field_index = 0;
+                self.cursor_position = 0;
             }
             KeyCode::Char('d') => {
                 if let Some(entry) = self.selected_entry() {
@@ -164,9 +178,16 @@ impl App {
                     self.input_mode = InputMode::Editing {
                         id: entry.id,
                         current_name: entry.name.clone(),
+                        current_secret: entry.secret_base32.clone(),
                     };
                     self.input_buffer = entry.name.clone();
+                    self.secret_buffer = entry.secret_base32.clone();
+                    self.add_field_index = 0;
+                    self.cursor_position = self.input_buffer.len();
                 }
+            }
+            KeyCode::Char('o') => {
+                self.toggle_sort_order();
             }
             KeyCode::Char('/') => {
                 self.input_mode = InputMode::Search;
@@ -238,25 +259,28 @@ impl App {
             }
             KeyCode::Tab | KeyCode::Down | KeyCode::Up => {
                 self.add_field_index = 1 - self.add_field_index;
+                self.cursor_position = self.current_buffer().len();
             }
             KeyCode::Enter => {
                 self.commit_add();
             }
             KeyCode::Char(c) => {
                 self.error_message = None;
-                if self.add_field_index == 0 {
-                    self.input_buffer.push(c);
-                } else {
-                    self.secret_buffer.push(c);
-                }
+                self.insert_char(c);
             }
             KeyCode::Backspace => {
                 self.error_message = None;
-                if self.add_field_index == 0 {
-                    self.input_buffer.pop();
-                } else {
-                    self.secret_buffer.pop();
-                }
+                self.remove_char();
+            }
+            KeyCode::Delete => {
+                self.error_message = None;
+                self.delete_char();
+            }
+            KeyCode::Left => {
+                self.move_cursor_left();
+            }
+            KeyCode::Right => {
+                self.move_cursor_right();
             }
             _ => {}
         }
@@ -393,29 +417,68 @@ impl App {
             KeyCode::Esc => {
                 self.input_mode = InputMode::Normal;
                 self.input_buffer.clear();
+                self.secret_buffer.clear();
                 self.error_message = None;
             }
+            KeyCode::Tab | KeyCode::Down | KeyCode::Up => {
+                self.add_field_index = 1 - self.add_field_index;
+                self.cursor_position = self.current_buffer().len();
+            }
             KeyCode::Enter => {
-                if let InputMode::Editing { id, .. } = self.input_mode {
+                if let InputMode::Editing { id, current_name, current_secret } = self.input_mode.clone() {
                     let new_name = self.input_buffer.trim().to_string();
-                    if !new_name.is_empty() {
-                        if let Err(e) = self.db.update_name(id, &new_name) {
-                            self.error_message = Some(format!("Error: {}", e));
-                            return;
+                    let new_secret = self.secret_buffer.trim().to_string();
+
+                    if new_name.is_empty() {
+                        self.error_message = Some("Name is required".into());
+                        return;
+                    }
+                    if new_secret.is_empty() {
+                        self.error_message = Some("Secret is required".into());
+                        return;
+                    }
+
+                    if new_secret != current_secret {
+                        // Secret changed -> prompt for password
+                        self.input_mode = InputMode::PasswordPromptForEdit {
+                            id,
+                            new_name,
+                            new_secret,
+                        };
+                        self.input_buffer.clear(); // for password entry
+                        self.cursor_position = 0;
+                    } else {
+                        // Only name changed (or no changes)
+                        if new_name != current_name {
+                            if let Err(e) = self.db.update_name(id, &new_name) {
+                                self.error_message = Some(format!("Error: {}", e));
+                                return;
+                            }
+                            self.reload_entries();
                         }
-                        self.reload_entries();
+                        self.input_mode = InputMode::Normal;
+                        self.input_buffer.clear();
+                        self.secret_buffer.clear();
                     }
                 }
-                self.input_mode = InputMode::Normal;
-                self.input_buffer.clear();
             }
             KeyCode::Char(c) => {
                 self.error_message = None;
-                self.input_buffer.push(c);
+                self.insert_char(c);
             }
             KeyCode::Backspace => {
                 self.error_message = None;
-                self.input_buffer.pop();
+                self.remove_char();
+            }
+            KeyCode::Delete => {
+                self.error_message = None;
+                self.delete_char();
+            }
+            KeyCode::Left => {
+                self.move_cursor_left();
+            }
+            KeyCode::Right => {
+                self.move_cursor_right();
             }
             _ => {}
         }
@@ -461,6 +524,109 @@ impl App {
                 self.input_buffer.push(c);
             }
             KeyCode::Backspace => {
+                self.input_buffer.pop();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_key_password_edit(&mut self, key: event::KeyEvent) {
+        if key.kind == KeyEventKind::Release {
+            return;
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                if let InputMode::PasswordPromptForEdit { id, new_name, new_secret } = self.input_mode.clone() {
+                    self.input_mode = InputMode::Editing {
+                        id,
+                        current_name: new_name.clone(),
+                        current_secret: new_secret.clone(),
+                    };
+                    self.input_buffer = new_name;
+                    self.secret_buffer = new_secret;
+                    self.add_field_index = 1; // back to secret field
+                    self.cursor_position = self.secret_buffer.len();
+                } else {
+                    self.input_mode = InputMode::Normal;
+                }
+                self.error_message = None;
+            }
+            KeyCode::Enter => {
+                let password = self.input_buffer.clone();
+                if let InputMode::PasswordPromptForEdit { id, new_name, new_secret } = self.input_mode.clone() {
+                    if self.verify_password(&password) {
+                        let mut algo = "SHA1".to_string();
+                        let mut digits = 6;
+                        let mut period = 30;
+                        if let Some(orig) = self.entries.iter().find(|e| e.id == id) {
+                            algo = orig.algorithm.clone();
+                            digits = orig.digits;
+                            period = orig.period;
+                        }
+
+                        let clean_secret = new_secret
+                            .trim()
+                            .replace(' ', "")
+                            .replace('-', "")
+                            .trim_end_matches('=')
+                            .to_uppercase();
+
+                        let validation_entry = SecretEntry {
+                            id,
+                            name: new_name.clone(),
+                            secret_base32: clean_secret.clone(),
+                            algorithm: algo,
+                            digits,
+                            period,
+                            sort_order: 0,
+                        };
+
+                        if let Err(e) = validation_entry.validate() {
+                            self.error_message = Some(format!("Invalid secret: {}", e));
+                            self.input_mode = InputMode::Editing {
+                                id,
+                                current_name: new_name,
+                                current_secret: new_secret,
+                            };
+                            self.input_buffer = validation_entry.name;
+                            self.secret_buffer = validation_entry.secret_base32;
+                            self.add_field_index = 1;
+                            self.cursor_position = self.secret_buffer.len();
+                            return;
+                        }
+
+                        if let Err(e) = self.db.update_secret(id, &new_name, &clean_secret) {
+                            self.error_message = Some(format!("Error: {}", e));
+                            self.input_mode = InputMode::Editing {
+                                id,
+                                current_name: new_name,
+                                current_secret: new_secret,
+                            };
+                            self.input_buffer = validation_entry.name;
+                            self.secret_buffer = validation_entry.secret_base32;
+                            self.add_field_index = 1;
+                            self.cursor_position = self.secret_buffer.len();
+                            return;
+                        }
+
+                        self.reload_entries();
+                        self.input_mode = InputMode::Normal;
+                        self.input_buffer.clear();
+                        self.secret_buffer.clear();
+                        self.show_notification("Secret updated successfully!");
+                    } else {
+                        self.error_message = Some("Wrong password".into());
+                        self.input_buffer.clear();
+                    }
+                }
+            }
+            KeyCode::Char(c) => {
+                self.error_message = None;
+                self.input_buffer.push(c);
+            }
+            KeyCode::Backspace => {
+                self.error_message = None;
                 self.input_buffer.pop();
             }
             _ => {}
@@ -563,12 +729,83 @@ impl App {
         self.notification = Some((msg.to_string(), Instant::now()));
     }
 
-    /// Auto-dismiss notification after 3 seconds.
+    /// Auto-dismiss notification after 1 second.
     pub fn tick(&mut self) {
         if let Some((_, timestamp)) = &self.notification {
-            if timestamp.elapsed().as_secs() >= 1 {
+            if timestamp.elapsed() >= std::time::Duration::from_secs(1) {
                 self.notification = None;
             }
+        }
+    }
+
+    fn current_buffer(&self) -> &String {
+        if self.add_field_index == 0 {
+            &self.input_buffer
+        } else {
+            &self.secret_buffer
+        }
+    }
+
+    fn current_buffer_mut(&mut self) -> &mut String {
+        if self.add_field_index == 0 {
+            &mut self.input_buffer
+        } else {
+            &mut self.secret_buffer
+        }
+    }
+
+    fn insert_char(&mut self, c: char) {
+        let mut chars: Vec<char> = self.current_buffer().chars().collect();
+        if self.cursor_position <= chars.len() {
+            chars.insert(self.cursor_position, c);
+            *self.current_buffer_mut() = chars.into_iter().collect();
+            self.cursor_position += 1;
+        }
+    }
+
+    fn remove_char(&mut self) {
+        let mut chars: Vec<char> = self.current_buffer().chars().collect();
+        if self.cursor_position > 0 && self.cursor_position <= chars.len() {
+            chars.remove(self.cursor_position - 1);
+            *self.current_buffer_mut() = chars.into_iter().collect();
+            self.cursor_position -= 1;
+        }
+    }
+
+    fn delete_char(&mut self) {
+        let mut chars: Vec<char> = self.current_buffer().chars().collect();
+        if self.cursor_position < chars.len() {
+            chars.remove(self.cursor_position);
+            *self.current_buffer_mut() = chars.into_iter().collect();
+        }
+    }
+
+    fn move_cursor_left(&mut self) {
+        if self.cursor_position > 0 {
+            self.cursor_position -= 1;
+        }
+    }
+
+    fn move_cursor_right(&mut self) {
+        let len = self.current_buffer().chars().count();
+        if self.cursor_position < len {
+            self.cursor_position += 1;
+        }
+    }
+
+    pub fn toggle_sort_order(&mut self) {
+        self.sort_order = match self.sort_order {
+            crate::models::SortOrder::CreationDate => crate::models::SortOrder::Name,
+            crate::models::SortOrder::Name => crate::models::SortOrder::CreationDate,
+        };
+        self.clamp_selected();
+    }
+
+    pub fn verify_password(&self, password: &str) -> bool {
+        if let Ok((salt, verification)) = self.db.load_vault_meta() {
+            crate::crypto::Vault::unlock(password, &salt, &verification).is_ok()
+        } else {
+            false
         }
     }
 
