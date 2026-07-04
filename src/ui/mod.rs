@@ -51,7 +51,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
         InputMode::Adding => render_add_dialog(f, area, app),
         InputMode::Editing { .. } => render_edit_dialog(f, area, app),
         InputMode::ConfirmDelete { .. } => render_confirm_dialog(f, area, app),
-        InputMode::PasswordPrompt { .. } => render_password_dialog(f, area, app),
+        InputMode::PasswordPrompt { .. } | InputMode::PasswordPromptForEdit { .. } => render_password_dialog(f, area, app),
         _ => {}
     }
 
@@ -64,14 +64,19 @@ pub fn render(f: &mut Frame, app: &mut App) {
 fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     let filtered = app.filtered_entries();
     let total_count = app.entries.len();
+    let sort_label = match app.sort_order {
+        crate::models::SortOrder::CreationDate => "Date",
+        crate::models::SortOrder::Name => "Name",
+    };
     let title = if app.search_input.is_empty() {
-        format!(" twofa-cli [{}] ", total_count)
+        format!(" twofa-cli [{}] (sort: {}) ", total_count, sort_label)
     } else {
         format!(
-            " twofa-cli [{}/{}] (filter: \"{}\", Esc to clear) ",
+            " twofa-cli [{}/{}] (filter: \"{}\", sort: {}, Esc to clear) ",
             filtered.len(),
             total_count,
-            app.search_input
+            app.search_input,
+            sort_label
         )
     };
 
@@ -190,6 +195,7 @@ fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
                 add_key(&mut spans, "Enter", "copy", "copy");
                 add_key(&mut spans, "d", "delete", "del");
                 add_key(&mut spans, "e", "edit", "edit");
+                add_key(&mut spans, "o", "sort", "sort");
                 add_key(&mut spans, "/", "search", "find");
                 add_key(&mut spans, "s", "settings", "set");
             }
@@ -206,14 +212,15 @@ fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         InputMode::Editing { .. } => {
             add_key(&mut spans, "Esc", "cancel", "esc");
             add_key(&mut spans, "Enter", "save", "save");
+            add_key(&mut spans, "Tab", "switch", "tab");
         }
         InputMode::ConfirmDelete { .. } => {
             add_key(&mut spans, "y", "confirm", "yes");
             add_key(&mut spans, "n", "cancel", "no");
         }
-        InputMode::PasswordPrompt { .. } => {
+        InputMode::PasswordPrompt { .. } | InputMode::PasswordPromptForEdit { .. } => {
             add_key(&mut spans, "Enter", "submit", "ok");
-            add_key(&mut spans, "Esc", "quit", "esc");
+            add_key(&mut spans, "Esc", "cancel/quit", "esc");
         }
         InputMode::Notification(_) => {}
     }
@@ -317,24 +324,74 @@ fn render_add_dialog(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_edit_dialog(f: &mut Frame, area: Rect, app: &App) {
-    let popup_area = centered_rect(50, 4, area);
+    let popup_area = centered_rect(65, 10, area);
     f.render_widget(Clear, popup_area);
 
-    let input = Paragraph::new(app.input_buffer.as_str())
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .margin(1)
+        .split(popup_area);
+
+    let name_style = if app.add_field_index == 0 {
+        Style::default().fg(theme::COLOR_ACCENT)
+    } else {
+        Style::default().fg(theme::COLOR_PRIMARY)
+    };
+
+    let secret_style = if app.add_field_index == 1 {
+        Style::default().fg(theme::COLOR_ACCENT)
+    } else {
+        Style::default().fg(theme::COLOR_PRIMARY)
+    };
+
+    let name_input = Paragraph::new(app.input_buffer.as_str())
         .block(
             Block::bordered()
-                .border_type(BorderType::Rounded)
                 .title(" Edit Name ")
-                .border_style(Style::default().fg(theme::COLOR_PRIMARY)),
+                .border_style(name_style),
         )
         .style(Style::default().fg(theme::COLOR_TEXT));
 
-    f.render_widget(input, popup_area);
+    let secret_input = Paragraph::new(app.secret_buffer.as_str())
+        .block(
+            Block::bordered()
+                .title(" Edit Secret ")
+                .border_style(secret_style),
+        )
+        .style(Style::default().fg(theme::COLOR_TEXT));
 
-    f.set_cursor_position((
-        popup_area.x + 1 + (app.input_buffer.len() as u16).min(popup_area.width.saturating_sub(2)),
-        popup_area.y + 1,
-    ));
+    f.render_widget(name_input, chunks[0]);
+    f.render_widget(secret_input, chunks[1]);
+
+    let hint = Paragraph::new("Tab switch field  Left/Right move cursor  Enter save  Esc cancel")
+        .style(Style::default().fg(theme::COLOR_MUTED))
+        .alignment(Alignment::Center);
+    f.render_widget(hint, chunks[2]);
+
+    if let Some(ref err) = app.error_message {
+        let err_para = Paragraph::new(err.as_str())
+            .style(Style::default().fg(theme::COLOR_RED))
+            .alignment(Alignment::Center);
+        f.render_widget(err_para, chunks[3]);
+    }
+
+    if app.add_field_index == 0 {
+        f.set_cursor_position((
+            chunks[0].x + 1 + (app.cursor_position as u16).min(chunks[0].width.saturating_sub(2)),
+            chunks[0].y + 1,
+        ));
+    } else {
+        f.set_cursor_position((
+            chunks[1].x + 1 + (app.cursor_position as u16).min(chunks[1].width.saturating_sub(2)),
+            chunks[1].y + 1,
+        ));
+    }
 }
 
 fn render_confirm_dialog(f: &mut Frame, area: Rect, app: &App) {
@@ -358,11 +415,19 @@ fn render_confirm_dialog(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_password_dialog(f: &mut Frame, area: Rect, app: &App) {
-    let popup_area = centered_rect(50, 5, area);
+    let popup_area = centered_rect(50, 7, area);
     f.render_widget(Clear, popup_area);
 
-    let is_new = matches!(app.input_mode, InputMode::PasswordPrompt { is_new: true });
-    let title = if is_new {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(2),
+        ])
+        .margin(1)
+        .split(popup_area);
+
+    let title = if matches!(app.input_mode, InputMode::PasswordPrompt { is_new: true }) {
         " Create Master Password "
     } else {
         " Enter Master Password "
@@ -378,7 +443,17 @@ fn render_password_dialog(f: &mut Frame, area: Rect, app: &App) {
         )
         .style(Style::default().fg(theme::COLOR_TEXT));
 
-    f.render_widget(input, popup_area);
+    f.render_widget(input, chunks[0]);
+
+    let hint_text = if matches!(app.input_mode, InputMode::PasswordPromptForEdit { .. }) {
+        "Confirm master password to edit secret"
+    } else {
+        "Press Enter to submit"
+    };
+    let hint = Paragraph::new(hint_text)
+        .style(Style::default().fg(theme::COLOR_MUTED))
+        .alignment(Alignment::Center);
+    f.render_widget(hint, chunks[1]);
 
     if let Some(ref err) = app.error_message {
         let err_area = Layout::default()
@@ -390,6 +465,11 @@ fn render_password_dialog(f: &mut Frame, area: Rect, app: &App) {
             .alignment(Alignment::Center);
         f.render_widget(err_para, err_area);
     }
+
+    f.set_cursor_position((
+        chunks[0].x + 1 + (app.input_buffer.len() as u16).min(chunks[0].width.saturating_sub(2)),
+        chunks[0].y + 1,
+    ));
 }
 
 fn render_notification(f: &mut Frame, area: Rect, msg: &str) {
