@@ -280,6 +280,19 @@ impl Database {
         .unwrap_or(0)
             > 0
     }
+
+    /// Update a secret's name and its secret value (encrypting it with the vault).
+    pub fn update_secret(&self, id: i64, new_name: &str, new_secret: &str) -> Result<(), AppError> {
+        let encrypted = self.vault.encrypt(new_secret)?;
+        let affected = self.conn.execute(
+            "UPDATE secrets SET name = ?1, secret_encrypted = ?2 WHERE id = ?3",
+            params![new_name, encrypted, id],
+        )?;
+        if affected == 0 {
+            return Err(AppError::SecretNotFound(id.to_string()));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -315,6 +328,34 @@ mod tests {
         let (new_salt, new_verification) = db.load_vault_meta().unwrap();
         let unlocked_vault = Vault::unlock("new_password", &new_salt, &new_verification);
         assert!(unlocked_vault.is_ok());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn test_update_secret() {
+        let (vault, salt, verification) = Vault::create("password").unwrap();
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join("test_twofa_update_secret.db");
+        if db_path.exists() {
+            let _ = std::fs::remove_file(&db_path);
+        }
+
+        let db = Database::open(&db_path, vault).unwrap();
+        db.save_vault_meta(&salt, &verification).unwrap();
+
+        // Add
+        let id = db.add_secret("test_service", "GSLUFLYRJC7ICGON", "SHA1", 6, 30).unwrap();
+
+        // Update
+        db.update_secret(id, "updated_service", "JBSWY3DPEHPK3PXP").unwrap();
+
+        // Verify
+        let secrets = db.list_secrets().unwrap();
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].name, "updated_service");
+        assert_eq!(secrets[0].secret_base32, "JBSWY3DPEHPK3PXP");
 
         // Cleanup
         let _ = std::fs::remove_file(&db_path);
