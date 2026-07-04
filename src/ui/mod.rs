@@ -584,9 +584,12 @@ fn render_settings(f: &mut Frame, area: Rect, app: &App) {
                     ])
                     .split(chunks[5]);
 
-                let app_info = Paragraph::new("twofa-cli v0.1.0 - A sleek terminal TOTP authenticator.")
-                    .alignment(Alignment::Center)
-                    .style(Style::default().fg(theme::COLOR_MUTED));
+                let app_info = Paragraph::new(format!(
+                    "twofa-cli v{} - A sleek terminal TOTP authenticator.",
+                    env!("CARGO_PKG_VERSION")
+                ))
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(theme::COLOR_MUTED));
                 let license_info = Paragraph::new("License: MIT. Secure AES-256-GCM database encryption.")
                     .alignment(Alignment::Center)
                     .style(Style::default().fg(theme::COLOR_MUTED));
