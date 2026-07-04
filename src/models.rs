@@ -72,6 +72,12 @@ pub enum AppTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortOrder {
+    CreationDate,
+    Name,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSubState {
     Menu,
     ChangePassword,
@@ -87,6 +93,7 @@ pub enum InputMode {
     Editing {
         id: i64,
         current_name: String,
+        current_secret: String,
     },
     ConfirmDelete {
         id: i64,
@@ -94,6 +101,11 @@ pub enum InputMode {
     },
     PasswordPrompt {
         is_new: bool,
+    },
+    PasswordPromptForEdit {
+        id: i64,
+        new_name: String,
+        new_secret: String,
     },
     Notification(String),
 }
