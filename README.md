@@ -1,5 +1,8 @@
 # twofa-cli 🔑
 
+[![CI](https://github.com/azamtoiri/twofa-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/azamtoiri/twofa-cli/actions/workflows/ci.yml)
+[![Release](https://github.com/azamtoiri/twofa-cli/actions/workflows/release.yml/badge.svg)](https://github.com/azamtoiri/twofa-cli/actions/workflows/release.yml)
+
 Стильный, быстрый и безопасный терминальный (TUI) двухфакторный менеджер аутентификации (2FA), написанный на Rust. Полный аналог Google Authenticator для командной строки с поддержкой шифрования базы данных
 ---
 
