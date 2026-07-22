@@ -2242,7 +2242,7 @@ dependencies = [
 
 [[package]]
 name = "twofa-cli"
-version = "1.2.0"
+version = "0.1.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
